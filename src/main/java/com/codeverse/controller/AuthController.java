@@ -3,6 +3,7 @@ package com.codeverse.controller;
 
 import com.codeverse.dto.request.LoginRequest;
 import com.codeverse.dto.request.RegisterRequest;
+import com.codeverse.dto.request.GoogleLoginRequest;
 import com.codeverse.dto.response.AuthResponse;
 import com.codeverse.dto.response.UserProfileResponse;
 import com.codeverse.entity.User;
@@ -26,7 +27,6 @@ public class AuthController {
         this.authService = authService;
     }
 
-    // REGISTER
     @PostMapping("/register")
     public ResponseEntity<AuthResponse> register(
             @Valid @RequestBody RegisterRequest request) {
@@ -38,7 +38,6 @@ public class AuthController {
                 .body(response);
     }
 
-    // LOGIN
     @PostMapping("/login")
     public ResponseEntity<AuthResponse> login(
             @Valid @RequestBody LoginRequest request) {
@@ -48,7 +47,16 @@ public class AuthController {
         return ResponseEntity.ok(response);
     }
 
-    // GET LOGGED-IN USER PROFILE
+    // GOOGLE LOGIN
+    @PostMapping("/google")
+    public ResponseEntity<AuthResponse> googleLogin(
+            @Valid @RequestBody GoogleLoginRequest request) {
+
+        AuthResponse response = authService.googleLogin(request);
+
+        return ResponseEntity.ok(response);
+    }
+
     @GetMapping("/me")
     public ResponseEntity<UserProfileResponse> getCurrentUser(
             @AuthenticationPrincipal User user) {
