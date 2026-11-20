@@ -15,6 +15,7 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
+import com.codeverse.dto.request.GithubLoginRequest;
 
 @RestController
 @RequestMapping("/api/auth")
@@ -54,6 +55,15 @@ public class AuthController {
 
         AuthResponse response = authService.googleLogin(request);
 
+        return ResponseEntity.ok(response);
+    }
+
+    // GITHUB LOGIN
+    @PostMapping("/github")
+    public ResponseEntity<AuthResponse> githubLogin(
+            @Valid @RequestBody GithubLoginRequest request) {
+
+        AuthResponse response = authService.githubLogin(request);
         return ResponseEntity.ok(response);
     }
 

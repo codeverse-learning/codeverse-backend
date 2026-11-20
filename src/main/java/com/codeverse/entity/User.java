@@ -10,6 +10,8 @@ import org.springframework.data.annotation.Id;
 import org.springframework.data.mongodb.core.mapping.Document;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.List;
 
 @Data
 @Builder
@@ -31,7 +33,9 @@ public class User {
     private String role = "STUDENT";
 
     @Builder.Default
-    private String authProvider = "LOCAL";
+    private List<String> authProviders = new ArrayList<>(List.of("LOCAL"));
+
+    private String authProvider;
 
     private String profileImage;
 
