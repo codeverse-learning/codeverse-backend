@@ -93,6 +93,9 @@ public class SecurityConfig {
                 )
 
                 .authorizeHttpRequests(auth -> auth
+                        .dispatcherTypeMatchers(
+                                jakarta.servlet.DispatcherType.ERROR
+                        ).permitAll()
 
                         // Browser preflight
                         .requestMatchers(
