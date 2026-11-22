@@ -45,6 +45,35 @@ public class GeminiService {
         this.objectMapper = new ObjectMapper();
     }
 
+    // Explicit, testable differences between learner levels.
+    private String levelInstructions(String level) {
+        String normalized = level == null ? "beginner" : level.trim().toLowerCase(java.util.Locale.ROOT);
+        return switch (normalized) {
+            case "advanced" -> """
+                    ADVANCED LEVEL (mandatory): Assume strong programming fundamentals.
+                    Focus on precise semantics, execution model, edge cases, trade-offs,
+                    relevant time/space complexity, maintainability and limitations.
+                    Explain WHY the implementation works and when alternatives are preferable.
+                    Avoid elementary analogies and definitions unless essential.
+                    Include technical caveats only when supported by the actual code.
+                    """;
+            case "intermediate" -> """
+                    INTERMEDIATE LEVEL (mandatory): Assume basic syntax knowledge.
+                    Focus on control flow, data flow, function interactions, intermediate
+                    values where determinable, common mistakes, and practical improvements.
+                    Use correct technical terminology with brief explanations.
+                    Prefer concrete execution walkthroughs over beginner analogies.
+                    """;
+            default -> """
+                    BEGINNER LEVEL (mandatory): Assume no prior programming knowledge.
+                    Use short, plain-English sentences and explain each new technical term.
+                    Use a simple everyday analogy when helpful. Explain syntax and purpose
+                    before discussing deeper details. Avoid complexity notation and jargon.
+                    Walk through a tiny concrete example where possible.
+                    """;
+        };
+    }
+
     // Existing AI Code Explanation
     public String explainCode(
             String language,
@@ -58,6 +87,7 @@ public class GeminiService {
 
                 Programming language: %s
                 Student level: %s
+                %s
 
                 IMPORTANT: This Markdown is displayed as SEPARATE interactive learning cards,
                 one heading per card. Do not write one long essay. Make each card feel like
@@ -102,7 +132,7 @@ public class GeminiService {
                 <submitted_code>
                 %s
                 </submitted_code>
-                """.formatted(language, explanationLevel, language, code);
+                """.formatted(language, explanationLevel, levelInstructions(explanationLevel), language, code);
 
         return generateText(prompt);
     }
@@ -118,6 +148,7 @@ public class GeminiService {
                 Create an interactive, motivating learning journey from the supplied code.
                 Programming language: %s
                 Student level: %s
+                %s
 
                 Produce 3 to 5 steps in the actual conceptual/execution order.
                 Each step must:
@@ -161,7 +192,7 @@ public class GeminiService {
                 <submitted_code>
                 %s
                 </submitted_code>
-                """.formatted(language, explanationLevel, language, code);
+                """.formatted(language, explanationLevel, levelInstructions(explanationLevel), language, code);
 
         String response = generateText(prompt);
 
@@ -467,6 +498,7 @@ public class GeminiService {
                 You are CODEVERSE Visual Learning Studio, an accurate programming educator.
                 Create a COMPLETE, detailed, step-by-step visual walkthrough of the
                 submitted code for a %s learner. Programming language: %s.
+                %s
                 Write all teaching content in English.
 
                 CODE COVERAGE IS THE TOP PRIORITY:
@@ -526,7 +558,7 @@ public class GeminiService {
                 <submitted_code>
                 %s
                 </submitted_code>
-                """.formatted(explanationLevel, language, lineCount, targetScenes, code);
+                """.formatted(explanationLevel, language, levelInstructions(explanationLevel), lineCount, targetScenes, code);
 
         for (int attempt = 1; attempt <= VISUAL_JSON_ATTEMPTS; attempt++) {
             String raw = generateText(prompt, true).trim();
@@ -630,6 +662,7 @@ public class GeminiService {
         String prompt = """
                 You are CODEVERSE Visual Learning Studio, a precise programming teacher.
                 Programming language: %s. Learner level: %s.
+                %s
                 Explain EVERY nonblank numbered source line in this chapter, in source order.
                 Create exactly one scene per nonblank line (there are %d nonblank lines).
                 Do not omit braces, imports, declarations, or closing statements: explain
@@ -662,7 +695,7 @@ public class GeminiService {
                 <submitted_code>
                 %s
                 </submitted_code>
-                """.formatted(language, explanationLevel, meaningfulLines, numbered);
+                """.formatted(language, explanationLevel, levelInstructions(explanationLevel), meaningfulLines, numbered);
 
         JsonNode lesson = null;
         for (int attempt = 1; attempt <= VISUAL_JSON_ATTEMPTS; attempt++) {
