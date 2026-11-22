@@ -1,14 +1,11 @@
-
 package com.codeverse.controller;
 
 import com.codeverse.dto.request.CodeExplainRequest;
 import com.codeverse.dto.response.CodeExplainResponse;
 import com.codeverse.service.GeminiService;
-
 import com.fasterxml.jackson.databind.JsonNode;
-
 import jakarta.validation.Valid;
-
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -22,40 +19,32 @@ public class AiController {
         this.geminiService = geminiService;
     }
 
-    // Existing AI Code Explanation
     @PostMapping("/explain")
     public ResponseEntity<CodeExplainResponse> explainCode(
-            @Valid @RequestBody CodeExplainRequest request
-    ) {
-
+            @Valid @RequestBody CodeExplainRequest request) {
         String explanation = geminiService.explainCode(
-                request.getLanguage(),
-                request.getCode(),
-                request.getExplanationLevel()
-        );
-
-        CodeExplainResponse response = CodeExplainResponse.builder()
+                request.getLanguage(), request.getCode(), request.getExplanationLevel());
+        return ResponseEntity.ok(CodeExplainResponse.builder()
                 .language(request.getLanguage())
                 .explanationLevel(request.getExplanationLevel())
                 .explanation(explanation)
                 .model(geminiService.getModel())
-                .build();
-
-        return ResponseEntity.ok(response);
+                .build());
     }
 
-    // NEW: Interactive AI Learning Lesson
-    @PostMapping("/interactive-lesson")
-    public ResponseEntity<JsonNode> generateInteractiveLesson(
-            @Valid @RequestBody CodeExplainRequest request
-    ) {
-
+    @PostMapping(value = "/interactive-lesson", produces = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<String> generateInteractiveLesson(
+            @Valid @RequestBody CodeExplainRequest request) {
         JsonNode lesson = geminiService.generateInteractiveLesson(
-                request.getLanguage(),
-                request.getCode(),
-                request.getExplanationLevel()
-        );
+                request.getLanguage(), request.getCode(), request.getExplanationLevel());
+        return ResponseEntity.ok(lesson.toString());
+    }
 
-        return ResponseEntity.ok(lesson);
+    @PostMapping(value = "/visual-lesson", produces = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<String> generateVisualLesson(
+            @Valid @RequestBody CodeExplainRequest request) {
+        JsonNode lesson = geminiService.generateVisualLesson(
+                request.getLanguage(), request.getCode(), request.getExplanationLevel(), "en");
+        return ResponseEntity.ok(lesson.toString());
     }
 }
