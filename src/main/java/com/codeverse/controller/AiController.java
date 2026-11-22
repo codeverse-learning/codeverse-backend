@@ -47,4 +47,20 @@ public class AiController {
                 request.getLanguage(), request.getCode(), request.getExplanationLevel(), "en");
         return ResponseEntity.ok(lesson.toString());
     }
+
+    // Returns chapter ranges without making a Gemini API call.
+    @PostMapping(value = "/visual-chapters/outline", produces = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<JsonNode> visualChapterOutline(
+            @Valid @RequestBody CodeExplainRequest request) {
+        return ResponseEntity.ok(geminiService.getVisualChapterOutline(request.getCode()));
+    }
+
+    // Generate only one chapter at a time. chapterIndex is zero-based.
+    @PostMapping(value = "/visual-chapters/generate", produces = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<JsonNode> generateVisualChapter(
+            @Valid @RequestBody CodeExplainRequest request,
+            @RequestParam int chapterIndex) {
+        return ResponseEntity.ok(geminiService.generateVisualChapter(
+                request.getLanguage(), request.getCode(), request.getExplanationLevel(), chapterIndex));
+    }
 }
