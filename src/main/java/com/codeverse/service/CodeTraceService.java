@@ -13,7 +13,7 @@ import java.util.Set;
 
 @Service
 public class CodeTraceService {
-    private static final Set<String> ENABLED_LANGUAGES = Set.of("python", "javascript", "java", "c");
+    private static final Set<String> ENABLED_LANGUAGES = Set.of("python", "javascript", "java", "c", "cpp");
     private static final Set<String> PLANNED_LANGUAGES = Set.of(
             "python", "javascript", "java", "c", "cpp", "csharp", "php", "go", "kotlin", "dart", "r", "bash"
     );
