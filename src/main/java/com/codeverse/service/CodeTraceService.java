@@ -23,7 +23,8 @@ public class CodeTraceService {
             "c",
             "cpp",
             "csharp",
-            "php"
+            "php",
+            "dart"
     );
 
     private static final Set<String> PLANNED_LANGUAGES = Set.of(
@@ -69,18 +70,11 @@ public class CodeTraceService {
                 .trim()
                 .toLowerCase(Locale.ROOT);
 
-        if (!PLANNED_LANGUAGES.contains(language)) {
-            return failure(
-                    language,
-                    "Unsupported programming language."
-            );
-        }
 
         if (!ENABLED_LANGUAGES.contains(language)) {
             return failure(
                     language,
-                    "Execution support for " + language
-                            + " is coming soon."
+                    "Unsupported programming language."
             );
         }
 
