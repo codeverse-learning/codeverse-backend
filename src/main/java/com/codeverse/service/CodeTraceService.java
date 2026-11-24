@@ -22,7 +22,8 @@ public class CodeTraceService {
             "java",
             "c",
             "cpp",
-            "csharp"
+            "csharp",
+            "php"
     );
 
     private static final Set<String> PLANNED_LANGUAGES = Set.of(
