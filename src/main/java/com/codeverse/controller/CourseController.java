@@ -14,12 +14,19 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 
+import com.codeverse.dto.request.AiLearningOutlineRequest;
+import com.codeverse.service.AiLearningContentService;
+import jakarta.validation.Valid;
+
+import com.codeverse.dto.response.LessonResponse;
+
 @RestController
 @RequestMapping("/api/courses")
 @RequiredArgsConstructor
 public class CourseController {
 
     private final CourseService courseService;
+    private final AiLearningContentService aiLearningContentService;
 
     // PUBLIC: Get published courses
     @GetMapping
@@ -96,5 +103,82 @@ public class CourseController {
     ) {
         courseService.deleteCourse(id);
         return ResponseEntity.noContent().build();
+    }
+
+    // ADMIN: Generate AI Learning Outline
+    @PostMapping("/admin/generate-outline")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<CourseResponse> generateLearningOutline(
+            @Valid @RequestBody AiLearningOutlineRequest request
+    ) {
+
+        CourseResponse response =
+                aiLearningContentService.generateOutline(request);
+
+        return ResponseEntity
+                .status(HttpStatus.CREATED)
+                .body(response);
+    }
+
+    // ADMIN: Generate detailed AI lesson content
+    @PostMapping("/admin/generate-lesson/{lessonId}")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<LessonResponse> generateLessonContent(
+            @PathVariable String lessonId
+    ) {
+
+        return ResponseEntity.ok(
+                aiLearningContentService
+                        .generateLessonContent(lessonId)
+        );
+    }
+
+    // ADMIN: Publish full course
+    @PatchMapping("/admin/{courseId}/publish-all")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<CourseResponse> publishFullCourse(
+            @PathVariable String courseId
+    ) {
+        return ResponseEntity.ok(
+                courseService.publishFullCourse(courseId)
+        );
+    }
+
+
+    // ADMIN: Unpublish full course
+    @PatchMapping("/admin/{courseId}/unpublish-all")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<CourseResponse> unpublishFullCourse(
+            @PathVariable String courseId
+    ) {
+        return ResponseEntity.ok(
+                courseService.unpublishFullCourse(courseId)
+        );
+    }
+
+
+    // ADMIN: Publish entire module
+    @PatchMapping("/admin/{courseId}/modules/{moduleId}/publish-all")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<CourseResponse> publishEntireModule(
+            @PathVariable String courseId,
+            @PathVariable String moduleId
+    ) {
+        return ResponseEntity.ok(
+                courseService.publishEntireModule(courseId, moduleId)
+        );
+    }
+
+
+    // ADMIN: Unpublish entire module
+    @PatchMapping("/admin/{courseId}/modules/{moduleId}/unpublish-all")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<CourseResponse> unpublishEntireModule(
+            @PathVariable String courseId,
+            @PathVariable String moduleId
+    ) {
+        return ResponseEntity.ok(
+                courseService.unpublishEntireModule(courseId, moduleId)
+        );
     }
 }
