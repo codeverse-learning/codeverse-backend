@@ -1,4 +1,3 @@
-
 package com.codeverse.service;
 
 import org.springframework.beans.factory.annotation.Value;
@@ -21,15 +20,27 @@ public class FlutterCompileService {
     private final ObjectMapper objectMapper;
 
     public FlutterCompileService(
+
             @Value("${codeverse.flutter.gateway-url:http://127.0.0.1:8092}")
-            String gatewayUrl
+            String gatewayUrl,
+
+            @Value("${codeverse.worker.key}")
+            String workerKey
     ) {
+
+        if (workerKey == null || workerKey.length() < 32) {
+
+            throw new IllegalStateException(
+                    "Worker security key is missing or invalid."
+            );
+        }
 
         this.objectMapper = new ObjectMapper();
 
         HttpClient httpClient = HttpClient.newBuilder()
                 .version(HttpClient.Version.HTTP_1_1)
                 .connectTimeout(Duration.ofSeconds(5))
+                .followRedirects(HttpClient.Redirect.NEVER)
                 .build();
 
         JdkClientHttpRequestFactory requestFactory =
@@ -42,6 +53,10 @@ public class FlutterCompileService {
         this.restClient = RestClient.builder()
                 .baseUrl(gatewayUrl)
                 .requestFactory(requestFactory)
+                .defaultHeader(
+                        "X-Worker-Key",
+                        workerKey
+                )
                 .build();
     }
 
@@ -70,11 +85,6 @@ public class FlutterCompileService {
                             Map.of("code", code)
                     );
 
-            System.out.println(
-                    "Flutter request body size: "
-                            + requestBody.length + " bytes"
-            );
-
             Map<String, Object> response = restClient.post()
                     .uri("/compile")
                     .contentType(MediaType.APPLICATION_JSON)
@@ -98,8 +108,10 @@ public class FlutterCompileService {
 
         } catch (Exception e) {
 
-            System.err.println("FLUTTER COMPILER ERROR:");
-            e.printStackTrace();
+            System.err.println(
+                    "Flutter compiler error: "
+                            + e.getClass().getSimpleName()
+            );
 
             return Map.of(
                     "success", false,

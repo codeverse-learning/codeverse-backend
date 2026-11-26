@@ -1,4 +1,3 @@
-
 package com.codeverse.service;
 
 import com.codeverse.dto.request.LoginRequest;
@@ -14,8 +13,10 @@ import com.google.api.client.googleapis.auth.oauth2.GoogleIdTokenVerifier;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.ParameterizedTypeReference;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
+import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.util.LinkedMultiValueMap;
@@ -24,12 +25,16 @@ import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
 
 import java.io.IOException;
+import java.net.http.HttpClient;
+import java.nio.charset.StandardCharsets;
 import java.security.GeneralSecurityException;
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.security.MessageDigest;
 
 @Service
 public class AuthService {
@@ -38,6 +43,7 @@ public class AuthService {
     private final PasswordEncoder passwordEncoder;
     private final JwtService jwtService;
     private final GoogleIdTokenVerifier googleIdTokenVerifier;
+    private final GoogleNonceService googleNonceService;
     private final RestClient restClient;
 
     private final String githubClientId;
@@ -49,6 +55,7 @@ public class AuthService {
             PasswordEncoder passwordEncoder,
             JwtService jwtService,
             GoogleIdTokenVerifier googleIdTokenVerifier,
+            GoogleNonceService googleNonceService,
             @Value("${github.client-id}") String githubClientId,
             @Value("${github.client-secret}") String githubClientSecret,
             @Value("${github.redirect-uri:http://localhost:5173/github/callback}")
@@ -58,7 +65,23 @@ public class AuthService {
         this.passwordEncoder = passwordEncoder;
         this.jwtService = jwtService;
         this.googleIdTokenVerifier = googleIdTokenVerifier;
-        this.restClient = RestClient.builder().build();
+        this.googleNonceService = googleNonceService;
+
+        // Configure HTTP connection timeout
+        HttpClient httpClient = HttpClient.newBuilder()
+                .connectTimeout(Duration.ofSeconds(5))
+                .followRedirects(HttpClient.Redirect.NEVER)
+                .build();
+
+        // Configure HTTP read timeout
+        JdkClientHttpRequestFactory requestFactory =
+                new JdkClientHttpRequestFactory(httpClient);
+
+        requestFactory.setReadTimeout(Duration.ofSeconds(15));
+
+        this.restClient = RestClient.builder()
+                .requestFactory(requestFactory)
+                .build();
 
         this.githubClientId = githubClientId;
         this.githubClientSecret = githubClientSecret;
@@ -68,13 +91,23 @@ public class AuthService {
     // REGISTER
     public AuthResponse register(RegisterRequest request) {
 
-        String email = request.getEmail()
-                .trim()
-                .toLowerCase(Locale.ROOT);
+        if (exceedsBcryptLimit(request.getPassword())) {
+            throw new IllegalArgumentException(
+                    "Password must not exceed 72 UTF-8 bytes"
+            );
+        }
+
+        if (request.getPassword().length() < 15) {
+            throw new IllegalArgumentException(
+                    "Password must contain at least 15 characters"
+            );
+        }
+
+        String email = normalizeEmail(request.getEmail());
 
         if (userRepository.existsByEmail(email)) {
             throw new IllegalArgumentException(
-                    "An account with this email already exists"
+                    "Unable to create account. Please check your details."
             );
         }
 
@@ -84,20 +117,28 @@ public class AuthService {
                 .password(passwordEncoder.encode(request.getPassword()))
                 .role("STUDENT")
                 .authProviders(new ArrayList<>(List.of("LOCAL")))
+                .authProvider("LOCAL")
                 .createdAt(LocalDateTime.now())
                 .build();
 
-        User savedUser = userRepository.save(user);
+        User savedUser = saveNewUser(user);
 
-        return buildAuthResponse(savedUser, "Registration successful!");
+        return buildAuthResponse(
+                savedUser,
+                "Registration successful!"
+        );
     }
 
     // EMAIL AND PASSWORD LOGIN
     public AuthResponse login(LoginRequest request) {
 
-        String email = request.getEmail()
-                .trim()
-                .toLowerCase(Locale.ROOT);
+        if (exceedsBcryptLimit(request.getPassword())) {
+            throw new IllegalArgumentException(
+                    "Invalid email or password"
+            );
+        }
+
+        String email = normalizeEmail(request.getEmail());
 
         User user = userRepository.findByEmail(email)
                 .orElseThrow(() -> new IllegalArgumentException(
@@ -115,25 +156,110 @@ public class AuthService {
             );
         }
 
-        return buildAuthResponse(user, "Login successful!");
+        return buildAuthResponse(
+                user,
+                "Login successful!"
+        );
     }
 
     // GOOGLE LOGIN
-    public AuthResponse googleLogin(GoogleLoginRequest request) {
+    public AuthResponse googleLogin(
+            GoogleLoginRequest request,
+            String sessionBinding
+    ) {
 
         try {
 
+            // Verify Google ID token signature and claims
             GoogleIdToken idToken =
                     googleIdTokenVerifier.verify(request.getIdToken());
 
             if (idToken == null) {
                 throw new IllegalArgumentException(
-                        "Invalid Google ID token"
+                        "Invalid Google authentication"
                 );
             }
 
             GoogleIdToken.Payload payload = idToken.getPayload();
 
+            // Retrieve nonce from verified Google ID token
+            String tokenNonce = safeString(payload.get("nonce"));
+
+            String requestNonce = request.getNonce();
+
+            // Validate nonce format
+            if (
+                    tokenNonce == null ||
+                            requestNonce == null ||
+                            !tokenNonce.matches("^[A-Za-z0-9_-]{43}$") ||
+                            !requestNonce.matches("^[A-Za-z0-9_-]{43}$")
+            ) {
+
+                throw new IllegalArgumentException(
+                        "Invalid Google authentication challenge"
+                );
+            }
+
+            // Compare signed token nonce with request nonce
+            boolean nonceMatches = MessageDigest.isEqual(
+                    tokenNonce.getBytes(StandardCharsets.UTF_8),
+                    requestNonce.getBytes(StandardCharsets.UTF_8)
+            );
+
+            if (!nonceMatches) {
+
+                throw new IllegalArgumentException(
+                        "Invalid Google authentication challenge"
+                );
+            }
+
+            // Validate browser-session binding and consume nonce
+            boolean validNonce =
+                    googleNonceService.validateAndConsumeNonce(
+                            requestNonce,
+                            sessionBinding
+                    );
+
+            if (!validNonce) {
+
+                throw new IllegalArgumentException(
+                        "Google authentication challenge is invalid or expired"
+                );
+            }
+
+            // Obtain immutable Google account ID
+            String googleId = payload.getSubject();
+
+            if (googleId == null ||
+                    googleId.isBlank() ||
+                    googleId.length() > 255) {
+
+                throw new IllegalArgumentException(
+                        "Invalid Google account identity"
+                );
+            }
+
+            // Find existing user using Google ID
+            User existingUser = userRepository
+                    .findByGoogleId(googleId)
+                    .orElse(null);
+
+            if (existingUser != null) {
+
+                if (!getAuthProviders(existingUser).contains("GOOGLE")) {
+
+                    throw new IllegalArgumentException(
+                            "Google authentication failed"
+                    );
+                }
+
+                return buildAuthResponse(
+                        existingUser,
+                        "Google login successful!"
+                );
+            }
+
+            // Verified email required for new accounts
             String email = payload.getEmail();
 
             if (email == null ||
@@ -144,52 +270,38 @@ public class AuthService {
                 );
             }
 
-            email = email.trim().toLowerCase(Locale.ROOT);
+            email = normalizeEmail(email);
 
-            String fullName = (String) payload.get("name");
-            String profileImage = (String) payload.get("picture");
+            // Prevent automatic account linking by email
+            if (userRepository.existsByEmail(email)) {
 
-            User user = userRepository.findByEmail(email)
-                    .orElse(null);
-
-            if (user == null) {
-
-                user = User.builder()
-                        .fullName(
-                                fullName != null && !fullName.isBlank()
-                                        ? fullName
-                                        : email.split("@")[0]
-                        )
-                        .email(email)
-                        .password(null)
-                        .role("STUDENT")
-                        .authProviders(new ArrayList<>(List.of("GOOGLE")))
-                        .profileImage(profileImage)
-                        .createdAt(LocalDateTime.now())
-                        .build();
-
-                user = userRepository.save(user);
-
-            } else {
-
-                List<String> providers = getAuthProviders(user);
-
-                if (providers.contains("LOCAL") &&
-                        !providers.contains("GOOGLE")) {
-
-                    throw new IllegalArgumentException(
-                            "This email already has a password account. Please use your existing login method."
-                    );
-                }
-
-                if (!providers.contains("GOOGLE")) {
-                    providers.add("GOOGLE");
-                    user.setAuthProviders(providers);
-                    user = userRepository.save(user);
-                }
+                throw new IllegalArgumentException(
+                        "Unable to authenticate. Please use your existing login method."
+                );
             }
 
-            return buildAuthResponse(user, "Google login successful!");
+            String fullName = safeString(payload.get("name"));
+            String profileImage = safeString(payload.get("picture"));
+
+            // Create a new Google account
+            User user = User.builder()
+                    .fullName(resolveFullName(fullName, email))
+                    .email(email)
+                    .password(null)
+                    .role("STUDENT")
+                    .authProviders(new ArrayList<>(List.of("GOOGLE")))
+                    .authProvider("GOOGLE")
+                    .googleId(googleId)
+                    .profileImage(profileImage)
+                    .createdAt(LocalDateTime.now())
+                    .build();
+
+            User savedUser = saveNewUser(user);
+
+            return buildAuthResponse(
+                    savedUser,
+                    "Google login successful!"
+            );
 
         } catch (GeneralSecurityException | IOException e) {
 
@@ -198,6 +310,9 @@ public class AuthService {
             );
         }
     }
+
+
+
 
     // GITHUB LOGIN
     public AuthResponse githubLogin(GithubLoginRequest request) {
@@ -213,6 +328,9 @@ public class AuthService {
             tokenRequest.add("code", request.getCode());
             tokenRequest.add("redirect_uri", githubRedirectUri);
 
+            // PKCE verification
+            tokenRequest.add("code_verifier", request.getCodeVerifier());
+
             Map<String, Object> tokenResponse = restClient.post()
                     .uri("https://github.com/login/oauth/access_token")
                     .contentType(MediaType.APPLICATION_FORM_URLENCODED)
@@ -222,47 +340,101 @@ public class AuthService {
                     .body(new ParameterizedTypeReference<>() {});
 
             if (tokenResponse == null ||
-                    tokenResponse.get("access_token") == null) {
+                    tokenResponse.containsKey("error")) {
+
+                throw new IllegalArgumentException(
+                        "GitHub authentication failed"
+                );
+            }
+
+            String accessToken =
+                    safeString(tokenResponse.get("access_token"));
+
+            if (accessToken == null || accessToken.isBlank()) {
 
                 throw new IllegalArgumentException(
                         "Unable to obtain GitHub access token"
                 );
             }
 
-            String accessToken =
-                    tokenResponse.get("access_token").toString();
-
-            // Get GitHub profile
+            // Get authenticated GitHub profile
             Map<String, Object> githubUser = restClient.get()
                     .uri("https://api.github.com/user")
                     .header(
                             HttpHeaders.AUTHORIZATION,
                             "Bearer " + accessToken
                     )
-                    .header(HttpHeaders.ACCEPT, "application/vnd.github+json")
+                    .header(
+                            HttpHeaders.ACCEPT,
+                            "application/vnd.github+json"
+                    )
                     .retrieve()
                     .body(new ParameterizedTypeReference<>() {});
 
             if (githubUser == null) {
+
                 throw new IllegalArgumentException(
                         "Unable to retrieve GitHub profile"
                 );
             }
 
-            // Get verified primary email
+            // Obtain immutable GitHub account ID
+            Object githubIdValue = githubUser.get("id");
+
+            if (!(githubIdValue instanceof Number)) {
+
+                throw new IllegalArgumentException(
+                        "Invalid GitHub account identity"
+                );
+            }
+
+            String githubId = githubIdValue.toString();
+
+            if (!githubId.matches("[1-9][0-9]{0,19}")) {
+
+                throw new IllegalArgumentException(
+                        "Invalid GitHub account identity"
+                );
+            }
+
+            // Find existing user using GitHub ID
+            User existingUser = userRepository
+                    .findByGithubId(githubId)
+                    .orElse(null);
+
+            if (existingUser != null) {
+
+                if (!getAuthProviders(existingUser).contains("GITHUB")) {
+
+                    throw new IllegalArgumentException(
+                            "GitHub authentication failed"
+                    );
+                }
+
+                return buildAuthResponse(
+                        existingUser,
+                        "GitHub login successful!"
+                );
+            }
+
+            // Get verified primary email for new accounts
             List<Map<String, Object>> emails = restClient.get()
                     .uri("https://api.github.com/user/emails")
                     .header(
                             HttpHeaders.AUTHORIZATION,
                             "Bearer " + accessToken
                     )
-                    .header(HttpHeaders.ACCEPT, "application/vnd.github+json")
+                    .header(
+                            HttpHeaders.ACCEPT,
+                            "application/vnd.github+json"
+                    )
                     .retrieve()
                     .body(new ParameterizedTypeReference<>() {});
 
             String email = null;
 
             if (emails != null) {
+
                 for (Map<String, Object> emailData : emails) {
 
                     boolean primary =
@@ -272,74 +444,61 @@ public class AuthService {
                             Boolean.TRUE.equals(emailData.get("verified"));
 
                     if (primary && verified) {
-                        email = (String) emailData.get("email");
+
+                        email = safeString(emailData.get("email"));
                         break;
                     }
                 }
             }
 
             if (email == null || email.isBlank()) {
+
                 throw new IllegalArgumentException(
-                        "No verified primary email found in your GitHub account."
+                        "No verified primary email found in your GitHub account"
                 );
             }
 
-            email = email.trim().toLowerCase(Locale.ROOT);
+            email = normalizeEmail(email);
 
-            String githubName = (String) githubUser.get("name");
-            String githubUsername = (String) githubUser.get("login");
-            String profileImage = (String) githubUser.get("avatar_url");
+            // Prevent automatic account linking by email
+            if (userRepository.existsByEmail(email)) {
+
+                throw new IllegalArgumentException(
+                        "Unable to authenticate. Please use your existing login method."
+                );
+            }
+
+            String githubName =
+                    safeString(githubUser.get("name"));
+
+            String githubUsername =
+                    safeString(githubUser.get("login"));
+
+            String profileImage =
+                    safeString(githubUser.get("avatar_url"));
 
             String fullName =
                     githubName != null && !githubName.isBlank()
                             ? githubName
                             : githubUsername;
 
-            if (fullName == null || fullName.isBlank()) {
-                fullName = email.split("@")[0];
-            }
+            // Create a new GitHub account
+            User user = User.builder()
+                    .fullName(resolveFullName(fullName, email))
+                    .email(email)
+                    .password(null)
+                    .role("STUDENT")
+                    .authProviders(new ArrayList<>(List.of("GITHUB")))
+                    .authProvider("GITHUB")
+                    .githubId(githubId)
+                    .profileImage(profileImage)
+                    .createdAt(LocalDateTime.now())
+                    .build();
 
-            // Find existing CODEVERSE account
-            User user = userRepository.findByEmail(email)
-                    .orElse(null);
-
-            if (user == null) {
-
-                // Create new GitHub account
-                user = User.builder()
-                        .fullName(fullName)
-                        .email(email)
-                        .password(null)
-                        .role("STUDENT")
-                        .authProviders(new ArrayList<>(List.of("GITHUB")))
-                        .profileImage(profileImage)
-                        .createdAt(LocalDateTime.now())
-                        .build();
-
-                user = userRepository.save(user);
-
-            } else {
-
-                List<String> providers = getAuthProviders(user);
-
-                // Only allow automatic linking to an existing Google account
-                if (!providers.contains("GOOGLE") &&
-                        !providers.contains("GITHUB")) {
-
-                    throw new IllegalArgumentException(
-                            "An account with this email already exists. Please login using your existing method."
-                    );
-                }
-
-                if (!providers.contains("GITHUB")) {
-                    providers.add("GITHUB");
-                    user.setAuthProviders(providers);
-                    user = userRepository.save(user);
-                }
-            }
+            User savedUser = saveNewUser(user);
 
             return buildAuthResponse(
-                    user,
+                    savedUser,
                     "GitHub login successful!"
             );
 
@@ -347,6 +506,21 @@ public class AuthService {
 
             throw new IllegalArgumentException(
                     "Unable to authenticate with GitHub. Please try again."
+            );
+        }
+    }
+
+    // SAVE NEW USER AND HANDLE DUPLICATE KEYS
+    private User saveNewUser(User user) {
+
+        try {
+
+            return userRepository.insert(user);
+
+        } catch (DuplicateKeyException e) {
+
+            throw new IllegalArgumentException(
+                    "Unable to create account. Please use your existing login method."
             );
         }
     }
@@ -362,7 +536,6 @@ public class AuthService {
 
         if (legacyProvider != null && !legacyProvider.isBlank()) {
 
-            // Migrate old Google/GitHub accounts
             if (providers.isEmpty()
                     || (providers.size() == 1
                     && "LOCAL".equals(providers.get(0))
@@ -372,17 +545,73 @@ public class AuthService {
                 providers.add(legacyProvider);
 
             } else if (!providers.contains(legacyProvider)) {
+
                 providers.add(legacyProvider);
             }
         }
 
-        if (providers.isEmpty()) {
+        if (providers.isEmpty() && user.getPassword() != null) {
+
             providers.add("LOCAL");
         }
 
-        user.setAuthProviders(providers);
-
         return providers;
+    }
+
+    // NORMALIZE EMAIL
+    private String normalizeEmail(String email) {
+
+        if (email == null || email.isBlank()) {
+
+            throw new IllegalArgumentException(
+                    "Invalid email address"
+            );
+        }
+
+        String normalizedEmail = email
+                .trim()
+                .toLowerCase(Locale.ROOT);
+
+        if (normalizedEmail.length() > 254 ||
+                !normalizedEmail.matches(
+                        "^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$"
+                )) {
+
+            throw new IllegalArgumentException(
+                    "Invalid email address"
+            );
+        }
+
+        return normalizedEmail;
+    }
+
+    // SAFELY READ STRING VALUES FROM PROVIDER RESPONSES
+    private String safeString(Object value) {
+
+        return value instanceof String text ? text : null;
+    }
+
+    // RESOLVE DISPLAY NAME
+    private String resolveFullName(String fullName, String email) {
+
+        String resolvedName =
+                fullName != null && !fullName.isBlank()
+                        ? fullName.trim()
+                        : email.split("@")[0];
+
+        if (resolvedName.length() > 100) {
+
+            resolvedName = resolvedName.substring(0, 100);
+        }
+
+        return resolvedName;
+    }
+
+    // BCrypt accepts at most 72 bytes, not 72 characters
+    private boolean exceedsBcryptLimit(String password) {
+
+        return password == null ||
+                password.getBytes(StandardCharsets.UTF_8).length > 72;
     }
 
     // COMMON AUTH RESPONSE
