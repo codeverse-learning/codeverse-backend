@@ -19,23 +19,38 @@ public class FlutterCompileService {
     private final RestClient restClient;
     private final ObjectMapper objectMapper;
 
+    // Flutter compiler feature flag
+    private final boolean flutterEnabled;
+
     public FlutterCompileService(
 
             @Value("${codeverse.flutter.gateway-url:http://127.0.0.1:8092}")
             String gatewayUrl,
 
             @Value("${codeverse.worker.key}")
-            String workerKey
+            String workerKey,
+
+            @Value("${codeverse.flutter.enabled:false}")
+            boolean flutterEnabled
     ) {
 
+        this.flutterEnabled = flutterEnabled;
+        this.objectMapper = new ObjectMapper();
+
+        // Do not initialize the worker client when disabled
+        if (!flutterEnabled) {
+
+            this.restClient = null;
+            return;
+        }
+
+        // Validate worker security key
         if (workerKey == null || workerKey.length() < 32) {
 
             throw new IllegalStateException(
                     "Worker security key is missing or invalid."
             );
         }
-
-        this.objectMapper = new ObjectMapper();
 
         HttpClient httpClient = HttpClient.newBuilder()
                 .version(HttpClient.Version.HTTP_1_1)
@@ -62,6 +77,17 @@ public class FlutterCompileService {
 
     public Map<String, Object> compile(String code) {
 
+        // Block compilation when the feature is disabled
+        if (!flutterEnabled || restClient == null) {
+
+            return Map.of(
+                    "success", false,
+                    "error",
+                    "Flutter compilation is currently unavailable."
+            );
+        }
+
+        // Validate Flutter code
         if (code == null || code.isBlank()) {
 
             return Map.of(
@@ -70,11 +96,13 @@ public class FlutterCompileService {
             );
         }
 
+        // Validate maximum code length
         if (code.length() > 30000) {
 
             return Map.of(
                     "success", false,
-                    "error", "Code exceeds the maximum allowed length."
+                    "error",
+                    "Code exceeds the maximum allowed length."
             );
         }
 
@@ -100,7 +128,8 @@ public class FlutterCompileService {
 
                 return Map.of(
                         "success", false,
-                        "error", "Empty response from Flutter compiler."
+                        "error",
+                        "Empty response from Flutter compiler."
                 );
             }
 
@@ -115,7 +144,8 @@ public class FlutterCompileService {
 
             return Map.of(
                     "success", false,
-                    "error", "Flutter compiler is unavailable or timed out."
+                    "error",
+                    "Flutter compiler is unavailable or timed out."
             );
         }
     }

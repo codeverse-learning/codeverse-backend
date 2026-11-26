@@ -19,6 +19,7 @@ import java.util.Set;
 @Service
 public class CodeTraceService {
 
+    // Supported programming languages
     private static final Set<String> ENABLED_LANGUAGES = Set.of(
             "python",
             "javascript",
@@ -35,15 +36,31 @@ public class CodeTraceService {
     private final ObjectMapper objectMapper =
             new ObjectMapper();
 
+    // Code Time Machine feature flag
+    private final boolean traceEnabled;
+
     public CodeTraceService(
 
             @Value("${codeverse.trace.gateway-url:http://127.0.0.1:8091}")
             String gatewayUrl,
 
             @Value("${codeverse.worker.key}")
-            String workerKey
+            String workerKey,
+
+            @Value("${codeverse.trace.enabled:false}")
+            boolean traceEnabled
     ) {
 
+        this.traceEnabled = traceEnabled;
+
+        // Do not initialize the worker client when disabled
+        if (!traceEnabled) {
+
+            this.restClient = null;
+            return;
+        }
+
+        // Validate worker security key
         if (workerKey == null || workerKey.length() < 32) {
 
             throw new IllegalStateException(
@@ -78,6 +95,7 @@ public class CodeTraceService {
             CodeTraceRequest request
     ) {
 
+        // Validate programming language
         if (request == null
                 || request.language() == null
                 || request.language().isBlank()) {
@@ -92,6 +110,16 @@ public class CodeTraceService {
                 .trim()
                 .toLowerCase(Locale.ROOT);
 
+        // Block code execution when the feature is disabled
+        if (!traceEnabled || restClient == null) {
+
+            return failure(
+                    language,
+                    "Code Time Machine is currently unavailable."
+            );
+        }
+
+        // Validate supported programming language
         if (!ENABLED_LANGUAGES.contains(language)) {
 
             return failure(
@@ -100,6 +128,7 @@ public class CodeTraceService {
             );
         }
 
+        // Validate source code
         if (request.code() == null
                 || request.code().isBlank()) {
 
@@ -109,6 +138,7 @@ public class CodeTraceService {
             );
         }
 
+        // Validate maximum code length
         if (request.code().length() > 10000) {
 
             return failure(
